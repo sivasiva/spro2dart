@@ -30,6 +30,13 @@ ok()    { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 note()  { printf '  \033[33m!\033[0m %s\n' "$1"; }
 step()  { printf '      → %s\n' "$1"; }
 fixed() { printf '  \033[33m⟳ fixed:\033[0m %s\n' "$1"; }
+emit()  {
+  printf '        \033[2m%s:%s\033[0m\n' "$1" "$2"
+  printf '          \033[31mBEFORE:\033[0m %s\n' "$3"
+  printf '          \033[32mAFTER: \033[0m %s\n' "$4"
+}
+trim()  { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
+splitrow() { F=${1%%:*}; local r=${1#*:}; L=${r%%:*}; C=$(trim "${r#*:}"); }
 
 [ -f "$root/config/application.rb" ] || { echo "No config/application.rb under '$root' — run from the Rails app root." >&2; exit 2; }
 
@@ -62,10 +69,17 @@ say "1. Gemfile"
 gf="$root/Gemfile"
 if [ -f "$gf" ]; then
   for dep in sprockets-rails sassc-rails sass-rails; do
-    grep -qE "gem[[:space:]]+[\"']$dep[\"']" "$gf" && { hit "Gemfile has $dep"; step "remove it"; }
+    if grep -qE "gem[[:space:]]+[\"']$dep[\"']" "$gf"; then
+      hit "Gemfile has $dep"
+      grep -nE "gem[[:space:]]+[\"']$dep[\"']" "$gf" | while IFS= read -r row; do
+        splitrow "$gf:$row"; emit "$F" "$L" "$C" "(delete this line)"
+      done
+    fi
   done
-  grep -qE "gem[[:space:]]+[\"']propshaft[\"']" "$gf"      && ok "propshaft present"       || { hit "propshaft missing";      step "add: gem \"propshaft\""; }
-  grep -qE "gem[[:space:]]+[\"']dartsass-rails[\"']" "$gf" && ok "dartsass-rails present"   || { hit "dartsass-rails missing"; step "add: gem \"dartsass-rails\""; }
+  grep -qE "gem[[:space:]]+[\"']propshaft[\"']" "$gf"      && ok "propshaft present" \
+    || { hit "propshaft missing";      emit "$gf" "-" "(missing)" "gem \"propshaft\""; }
+  grep -qE "gem[[:space:]]+[\"']dartsass-rails[\"']" "$gf" && ok "dartsass-rails present" \
+    || { hit "dartsass-rails missing"; emit "$gf" "-" "(missing)" "gem \"dartsass-rails\""; }
 else
   note "no Gemfile found"
 fi
@@ -84,8 +98,10 @@ say "3. Sprockets config (environments / application.rb)"
 n=$(c 'config\.assets\.(precompile|compile|digest|version|css_compressor|js_compressor|debug)|require [\"'\'']sprockets/railtie[\"'\'']|Sprockets::')
 if [ "$n" -gt 0 ]; then
   hit "$n Sprockets config/API reference(s)"
-  g 'config\.assets\.(precompile|compile|digest|version|css_compressor|js_compressor|debug)|require [\"'\'']sprockets/railtie[\"'\'']|Sprockets::' | sed 's/^/        /'
-  step "remove — Propshaft always digests, has no compile step, no allowlist"
+  g 'config\.assets\.(precompile|compile|digest|version|css_compressor|js_compressor|debug)|require [\"'\'']sprockets/railtie[\"'\'']|Sprockets::' | while IFS= read -r row; do
+    splitrow "$row"; emit "$F" "$L" "$C" "(delete this line)"
+  done
+  step "Propshaft always digests, has no compile step, no allowlist"
 else
   ok "no Sprockets config references"
 fi
@@ -94,8 +110,14 @@ say "4. Sprockets Sass helper functions"
 n=$(c 'image-url|asset-path|font-url|asset-data-url|image-path|font-path')
 if [ "$n" -gt 0 ]; then
   hit "$n use(s) of Sprockets Sass helpers (crash under Dart Sass)"
-  g 'image-url|asset-path|font-url|asset-data-url|image-path|font-path' | sed 's/^/        /'
-  step "replace with url(\"<logical/path>\") — Propshaft rewrites the digest"
+  g 'image-url|asset-path|font-url|asset-data-url|image-path|font-path' | while IFS= read -r row; do
+    splitrow "$row"
+    after=$(printf '%s' "$C" | sed -E 's/(image|asset|font)-url\(/url(/g')
+    if printf '%s' "$after" | grep -qE '(image|asset|font)-path\(|asset-data-url\('; then
+      after="$after   # *-path / data-url: resolve manually to a logical url()"
+    fi
+    emit "$F" "$L" "$C" "$after"
+  done
 else
   ok "no Sprockets Sass helper functions"
 fi
@@ -114,7 +136,7 @@ say "6. Sprockets directives"
 n=$(c '^[[:space:]]*//=')
 if [ "$n" -gt 0 ]; then
   hit "$n //= directive line(s)"
-  g '^[[:space:]]*//=' | sed 's/^/        /'
+  g '^[[:space:]]*//=' | while IFS= read -r row; do splitrow "$row"; emit "$F" "$L" "$C" "(delete this line)"; done
   if [ "$FIX" -eq 1 ]; then
     grep -rIlE '^[[:space:]]*//=' "${present[@]}" 2>/dev/null | while IFS= read -r f; do
       perl -i -ne 'print unless /^\s*\/\/=/' "$f" && fixed "stripped directives from $f"
@@ -153,7 +175,12 @@ fi
 say "9. JavaScript bundling (Propshaft won't bundle/transpile)"
 js_hit=0
 n=$(grep -rInE '^[[:space:]]*//=[[:space:]]*require' "${present[@]}" --include='*.js' 2>/dev/null | wc -l | tr -d ' ')
-[ "$n" -gt 0 ] && { js_hit=1; hit "$n //= require directive(s) in .js"; }
+if [ "$n" -gt 0 ]; then
+  js_hit=1; hit "$n //= require directive(s) in .js"
+  grep -rInE '^[[:space:]]*//=[[:space:]]*require' "${present[@]}" --include='*.js' 2>/dev/null | while IFS= read -r row; do
+    splitrow "$row"; emit "$F" "$L" "$C" "(delete this line)"
+  done
+fi
 n=$(grep -rInE '^[[:space:]]*(import[[:space:]]|export[[:space:]])' "${present[@]}" --include='*.js' 2>/dev/null | wc -l | tr -d ' ')
 [ "$n" -gt 0 ] && { js_hit=1; hit "$n ESM import/export line(s) in .js — need importmap or a bundler"; }
 n=$(find "$root/app/assets" -name '*.coffee' 2>/dev/null | wc -l | tr -d ' ')
