@@ -1,0 +1,481 @@
+<title>Propshaft for a lib/assets engine — the Shaft migration</title>
+<style>
+  :root {
+    --paper:      #FAF9F7;
+    --inset:      #F1EEEA;
+    --ink:        #1C1A19;
+    --muted:      #6E6560;
+    --faint:      #938880;
+    --accent:     #B41E2E;
+    --accent-ink: #8B1622;
+    --accent-tint:#F0D9DC;
+    --sass:       #B65C93;
+    --rule:       #E4DFDA;
+    --code-bg:    #211D1C;
+    --code-fg:    #E9E2DD;
+    --code-mut:   #9A8F88;
+    --good:       #2F7D5B;
+
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --measure: 40rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #17130F;
+      --inset:      #201A16;
+      --ink:        #ECE5DF;
+      --muted:      #A79C93;
+      --faint:      #7C7168;
+      --accent:     #F0808C;
+      --accent-ink: #F4A0A8;
+      --accent-tint:#3A1F22;
+      --sass:       #E091BE;
+      --rule:       #322A24;
+      --code-bg:    #100C0A;
+      --code-fg:    #E9E2DD;
+      --code-mut:   #8A7F77;
+      --good:       #6FCF9B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#17130F; --inset:#201A16; --ink:#ECE5DF; --muted:#A79C93; --faint:#7C7168;
+    --accent:#F0808C; --accent-ink:#F4A0A8; --accent-tint:#3A1F22; --sass:#E091BE;
+    --rule:#322A24; --code-bg:#100C0A; --code-fg:#E9E2DD; --code-mut:#8A7F77; --good:#6FCF9B;
+  }
+  :root[data-theme="light"] {
+    --paper:#FAF9F7; --inset:#F1EEEA; --ink:#1C1A19; --muted:#6E6560; --faint:#938880;
+    --accent:#B41E2E; --accent-ink:#8B1622; --accent-tint:#F0D9DC; --sass:#B65C93;
+    --rule:#E4DFDA; --code-bg:#211D1C; --code-fg:#E9E2DD; --code-mut:#9A8F88; --good:#2F7D5B;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* reading progress */
+  .progress {
+    position: fixed; top: 0; left: 0; height: 3px; width: 0%;
+    background: var(--accent); z-index: 50;
+    transition: width .08s linear;
+  }
+  @media (prefers-reduced-motion: reduce) { .progress { transition: none; } }
+
+  .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 1.5rem; }
+
+  /* ---- masthead ---- */
+  header.masthead { padding: 4.5rem 0 2rem; border-bottom: 1px solid var(--rule); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 1.4rem;
+    display: flex; align-items: center; gap: .7rem;
+  }
+  .eyebrow::before { content: ""; width: 1.6rem; height: 2px; background: var(--accent); display: inline-block; }
+  h1 {
+    font-family: var(--sans);
+    font-weight: 800; font-size: clamp(2.1rem, 6vw, 3.15rem);
+    line-height: 1.05; letter-spacing: -0.02em; text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+  .standfirst {
+    font-size: 1.24rem; line-height: 1.5; color: var(--muted);
+    margin: 0 0 1.9rem; text-wrap: pretty; font-style: italic;
+  }
+  .byline {
+    font-family: var(--mono); font-size: .78rem; color: var(--faint);
+    display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: center;
+  }
+  .byline b { color: var(--muted); font-weight: 600; }
+  .byline .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); display: inline-block; }
+
+  /* ---- pipeline diagram ---- */
+  .pipe {
+    margin: 2.6rem 0 0; padding: 1.4rem 1.3rem;
+    background: var(--inset); border: 1px solid var(--rule); border-radius: 10px;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem;
+  }
+  .pipe .node { text-align: center; }
+  .pipe .cap { font-family: var(--mono); font-size: .66rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); display: block; margin-bottom: .35rem; }
+  .pipe .name { font-family: var(--sans); font-weight: 700; font-size: 1.05rem; }
+  .pipe .old .name { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); text-decoration-thickness: 1.5px; }
+  .pipe .new .name { color: var(--accent); }
+  .pipe .arrow { font-family: var(--sans); color: var(--faint); font-size: 1.4rem; line-height: 1; }
+  .pipe .sub { display: block; font-family: var(--mono); font-size: .64rem; color: var(--faint); margin-top: .3rem; }
+
+  /* ---- body ---- */
+  main { padding: 2.6rem 0 1rem; }
+  main p { margin: 0 0 1.35rem; text-wrap: pretty; }
+  main .wrap > p a, main .wrap a.inline { color: var(--accent-ink); text-decoration: underline; text-decoration-color: var(--accent-tint); text-underline-offset: 2px; text-decoration-thickness: 1.5px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  h2 {
+    font-family: var(--sans); font-weight: 800; font-size: 1.05rem;
+    letter-spacing: .02em; margin: 3.2rem 0 1.3rem; scroll-margin-top: 1.5rem;
+  }
+  h3 { font-family: var(--sans); font-weight: 700; font-size: 1.16rem; letter-spacing: -0.01em; margin: 2.2rem 0 .7rem; }
+
+  /* act header */
+  .act { margin: 3.4rem 0 1.6rem; padding-top: 1.6rem; border-top: 2px solid var(--ink); }
+  .act .tag {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); display: block; margin-bottom: .5rem;
+  }
+  .act h2 { margin: 0 0 .5rem; font-size: 1.9rem; letter-spacing: -0.02em; }
+  .act .who { color: var(--muted); font-size: 1.02rem; margin: 0; }
+
+  /* numbered sequential steps */
+  ol.steps { list-style: none; counter-reset: s; margin: 1.8rem 0; padding: 0; }
+  ol.steps > li {
+    counter-increment: s; position: relative;
+    padding: 0 0 0 3.2rem; margin: 0 0 1.9rem; min-height: 2rem;
+  }
+  ol.steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: -0.1rem;
+    width: 2.1rem; height: 2.1rem; border-radius: 50%;
+    background: var(--paper); border: 1.5px solid var(--accent); color: var(--accent);
+    font-family: var(--mono); font-size: .9rem; font-weight: 600;
+    display: grid; place-items: center;
+  }
+  ol.steps > li h3 { margin: .1rem 0 .5rem; }
+  ol.steps > li p:last-child { margin-bottom: 0; }
+
+  /* code */
+  pre {
+    background: var(--code-bg); color: var(--code-fg);
+    font-family: var(--mono); font-size: .82rem; line-height: 1.62;
+    padding: 1.05rem 1.15rem; border-radius: 9px; margin: 1.1rem 0 1.35rem;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    border: 1px solid color-mix(in srgb, var(--code-bg) 80%, #fff 20%);
+  }
+  pre .cmt { color: var(--code-mut); }
+  pre .k { color: var(--accent); }
+  pre .s { color: var(--sass); }
+  pre .g { color: var(--good); }
+  pre .path { color: #cdb8a8; }
+  code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--inset); padding: .1em .38em; border-radius: 4px;
+    border: 1px solid var(--rule);
+  }
+  pre code { background: none; padding: 0; border: 0; }
+
+  .fname {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .04em;
+    color: var(--faint); margin: 1.1rem 0 -.6rem; display: block;
+  }
+
+  /* callout */
+  .note {
+    margin: 1.6rem 0; padding: 1.1rem 1.2rem 1.1rem 1.3rem;
+    background: var(--accent-tint); border-radius: 8px;
+    border-left: 3px solid var(--accent);
+    font-size: .96rem; line-height: 1.58;
+  }
+  .note .lab {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent-ink); font-weight: 700; display: block; margin-bottom: .4rem;
+  }
+  .note p { margin: 0; }
+  .note p + p { margin-top: .7rem; }
+  :root[data-theme="dark"] .note, .note { color: var(--ink); }
+
+  /* table */
+  .tablewrap { overflow-x: auto; margin: 1.4rem 0 1.6rem; border: 1px solid var(--rule); border-radius: 9px; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; font-family: var(--sans); }
+  th, td { text-align: left; padding: .7rem .85rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 700; background: var(--inset); }
+  tr:last-child td { border-bottom: 0; }
+  td .p { font-family: var(--mono); font-size: .8rem; }
+  .yes { color: var(--good); font-weight: 600; }
+  .no { color: var(--accent); font-weight: 600; }
+
+  ul.plain { margin: 1rem 0 1.4rem; padding-left: 1.2rem; }
+  ul.plain li { margin-bottom: .55rem; }
+  ul.plain li::marker { color: var(--accent); }
+
+  /* recap */
+  .recap {
+    margin: 3rem 0 1rem; padding: 1.6rem 1.5rem;
+    background: var(--inset); border: 1px solid var(--rule); border-radius: 12px;
+  }
+  .recap h2 { margin: 0 0 1rem; }
+  .recap ol { margin: 0; padding-left: 1.3rem; }
+  .recap li { margin-bottom: .6rem; font-size: .97rem; }
+  .recap b { font-family: var(--sans); font-weight: 700; }
+
+  footer {
+    border-top: 1px solid var(--rule); margin-top: 3.5rem;
+    padding: 2rem 0 3.5rem; font-family: var(--mono); font-size: .74rem; color: var(--faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: .6rem;
+  }
+
+  /* theme toggle */
+  .toggle {
+    position: fixed; top: 1rem; right: 1rem; z-index: 40;
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .06em;
+    background: var(--inset); color: var(--muted);
+    border: 1px solid var(--rule); border-radius: 20px;
+    padding: .4rem .8rem; cursor: pointer;
+  }
+  .toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+  @media (max-width: 480px) {
+    body { font-size: 18px; }
+    .pipe { grid-template-columns: 1fr; gap: .5rem; }
+    .pipe .arrow { transform: rotate(90deg); }
+  }
+</style>
+
+<div class="progress" id="progress"></div>
+<button class="toggle" id="toggle" aria-label="Toggle color theme">◐ theme</button>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">Asset pipeline &middot; Rails engines</p>
+    <h1>Propshaft for an engine that lives in <code>lib/assets</code></h1>
+    <p class="standfirst">Rails&nbsp;8 makes Propshaft the default, and Propshaft compiles nothing. For the Shaft engine that hides its stylesheet in <code>lib/assets/stylesheets/shaft.scss</code>, that one detail changes everything — because <code>lib/assets</code> was never on the load path to begin with.</p>
+    <p class="byline">
+      <b>Platform team</b><span class="dot"></span>
+      <span>Migration note</span><span class="dot"></span>
+      <span>Sprockets &rarr; Propshaft + dartsass-rails</span><span class="dot"></span>
+      <span>~7 min</span>
+    </p>
+
+    <div class="pipe" role="img" aria-label="Sprockets replaced by Propshaft plus dartsass-rails">
+      <div class="node old">
+        <span class="cap">Rails 7 &amp; earlier</span>
+        <span class="name">Sprockets</span>
+        <span class="sub">bundles · compiles · serves</span>
+      </div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node new">
+        <span class="cap">Rails 8 default</span>
+        <span class="name">Propshaft + dartsass</span>
+        <span class="sub">fingerprints · serves</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <p>Sprockets did four jobs at once: it bundled, transpiled, compiled Sass, and fingerprinted. Propshaft keeps only the last one. It has no directive language, no <code>//=&nbsp;require</code>, no SCSS compilation, no CoffeeScript — it fingerprints whatever is on the load path and serves it. Everything else moves to a dedicated tool.</p>
+
+    <p>For most apps the guidance is well-trodden: add <code>dartsass-rails</code> for CSS, <code>jsbundling-rails</code> for JS, delete the Sprockets config, and move on. But the Shaft engine has a wrinkle that the standard guide quietly skips over. Its styles don't live in <code>app/assets/stylesheets</code> — they live one directory over, in <code>lib/assets/stylesheets/shaft.scss</code>. That single fact is the whole story.</p>
+
+    <div class="note">
+      <span class="lab">The load-path trap</span>
+      <p>A Rails engine automatically appends its <code>app/assets/*</code> directories to the host's asset paths — that's why the usual guide "just works" with no config. <b>It does not do this for <code>lib/assets</code>.</b> Under Sprockets the file was reachable only because something added that path explicitly. Migrate naively and the stylesheet vanishes from the load path, Propshaft never sees it, and every reference 404s in production. Fixing that is Act&nbsp;I.</p>
+    </div>
+
+    <!-- ACT I -->
+    <div class="act">
+      <span class="tag">Act I</span>
+      <h2>Gem-side</h2>
+      <p class="who">What changes inside the Shaft engine so it can feed both a legacy Sprockets host and a Rails&nbsp;8 Propshaft host — from the same version.</p>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <h3>Expose <code>lib/assets/stylesheets</code> to whichever pipeline is present</h3>
+        <p>This is the linchpin. Because <code>lib/assets</code> isn't auto-added, the engine must push it onto <code>config.assets.paths</code> itself. Do it conditionally so one initializer serves Sprockets and Propshaft alike — Propshaft reads the very same <code>assets.paths</code>, and <code>dartsass-rails</code> turns each entry into a Sass <code>--load-path</code>.</p>
+        <span class="fname">lib/shaft/engine.rb</span>
+<pre><span class="k">module</span> Shaft
+  <span class="k">class</span> Engine &lt; ::Rails::Engine
+    <span class="cmt"># lib/assets is NOT auto-exposed like app/assets — do it by hand.</span>
+    initializer <span class="s">"shaft.assets"</span> <span class="k">do</span> |app|
+      styles = root.join(<span class="s">"lib/assets/stylesheets"</span>).to_s
+      app.config.assets.paths &lt;&lt; styles <span class="k">if</span> app.config.respond_to?(<span class="s">:assets</span>)
+
+      <span class="cmt"># Sprockets host only: register the compiled name for precompile.</span>
+      <span class="k">if</span> defined?(::Sprockets)
+        app.config.assets.precompile &lt;&lt; <span class="s">"shaft.css"</span>
+      <span class="k">end</span>
+    <span class="k">end</span>
+  <span class="k">end</span>
+<span class="k">end</span></pre>
+        <p>Now <code>@use "shaft"</code> resolves on the host regardless of pipeline. On Propshaft the path is served and fingerprinted; on a dartsass host it's also a load path the compiler can reach.</p>
+      </li>
+
+      <li>
+        <h3>Move the dependency off Sprockets</h3>
+        <p>The gem should compel no pipeline on its hosts. Depend on <code>propshaft</code> at runtime to serve the engine's own images and fonts; keep <code>dartsass-rails</code> as a <em>development</em> dependency for your dummy app and CI. Drop <code>sprockets-rails</code> and <code>sassc-rails</code>.</p>
+        <span class="fname">shaft.gemspec</span>
+<pre>spec.add_dependency <span class="s">"propshaft"</span>
+spec.add_development_dependency <span class="s">"dartsass-rails"</span>
+
+<span class="cmt"># remove: sprockets-rails, sassc-rails</span></pre>
+      </li>
+
+      <li>
+        <h3>Make <code>shaft.scss</code> Dart-Sass-clean</h3>
+        <p>SassC is gone; the entrypoint now compiles under Dart Sass. Convert the directive-era <code>@import</code> chain to <code>@use</code> / <code>@forward</code>, and mark every themeable variable <code>!default</code> so hosts can override at compile time.</p>
+        <span class="fname">lib/assets/stylesheets/shaft.scss</span>
+<pre><span class="cmt">// was: @import "shaft/variables"; @import "shaft/buttons";</span>
+<span class="k">@use</span> <span class="s">"shaft/variables"</span> <span class="k">as</span> vars;
+<span class="k">@forward</span> <span class="s">"shaft/buttons"</span>;
+<span class="k">@forward</span> <span class="s">"shaft/card"</span>;</pre>
+        <span class="fname">lib/assets/stylesheets/shaft/_variables.scss</span>
+<pre>$primary: <span class="s">#B41E2E</span> <span class="k">!default</span>;  <span class="cmt">// host can @use "shaft" with (...)</span>
+$radius:  <span class="s">0.5rem</span>   <span class="k">!default</span>;</pre>
+      </li>
+
+      <li>
+        <h3>Delete every Sprockets-ism</h3>
+        <p>None of these exist under Propshaft or Dart Sass, and each fails loudly on the host's build rather than yours — the worst place to find out.</p>
+        <ul class="plain">
+          <li><b>Sass asset helpers</b> — <code>image-url</code>, <code>asset-path</code>, <code>font-url</code> don't exist in Dart Sass. Use plain <code>url("shaft/logo.png")</code>; Propshaft rewrites it to the digested path.</li>
+          <li><b>Directives</b> — strip any <code>//=&nbsp;require</code> / <code>require_tree</code>.</li>
+          <li><b>ERB assets</b> — rename <code>*.scss.erb</code> and remove the templating.</li>
+        </ul>
+<pre><span class="cmt"># find them all before you ship</span>
+grep -rnE <span class="s">'image-url|asset-path|font-url|//= '</span> lib/assets</pre>
+      </li>
+
+      <li>
+        <h3>Prove it against a dummy host in CI</h3>
+        <p>Ship a tiny app under <code>test/dummy</code> that <code>@use</code>s the engine and actually compiles, so a broken load path surfaces in your pipeline — not a consumer's.</p>
+<pre><span class="cmt"># from test/dummy</span>
+bin/rails dartsass:build           <span class="cmt"># must exit 0</span>
+RAILS_ENV=production bin/rails assets:precompile</pre>
+      </li>
+    </ol>
+
+    <!-- ACT II -->
+    <div class="act">
+      <span class="tag">Act II</span>
+      <h2>Host-side</h2>
+      <p class="who">What each Rails&nbsp;8 app does to compile Shaft's styles — following the Propshaft default, using <code>dartsass-rails</code> and deliberately <em>not</em> <code>cssbundling-rails</code>.</p>
+    </div>
+
+    <p>The Rails&nbsp;8 default guide reaches for <code>cssbundling-rails</code> (<code>rails css:install:sass</code>). We skip it. <code>cssbundling</code> drives a <code>package.json</code> build script — a raw <code>sass</code> CLI call whose load paths you'd have to wire by hand to reach an engine's <code>lib/assets</code>. <code>dartsass-rails</code> instead registers every <code>config.assets.paths</code> entry as a load path automatically — including the one Act&nbsp;I just added. No Node, no hand-wired paths.</p>
+
+    <ol class="steps">
+      <li>
+        <h3>Gemfile: Propshaft + dartsass, no cssbundling</h3>
+        <p>Propshaft is already the Rails&nbsp;8 default. Add <code>dartsass-rails</code>; add <code>jsbundling-rails</code> only if you have real JS to build.</p>
+        <span class="fname">Gemfile</span>
+<pre>gem <span class="s">"propshaft"</span>          <span class="cmt"># default on Rails 8</span>
+gem <span class="s">"dartsass-rails"</span>
+<span class="cmt"># NOT cssbundling-rails</span></pre>
+<pre>bin/rails dartsass:install</pre>
+      </li>
+
+      <li>
+        <h3>Point the build at your entrypoint</h3>
+        <p>One build entry compiles the app stylesheet; Shaft rides along through the load path.</p>
+        <span class="fname">config/initializers/dartsass.rb</span>
+<pre>Rails.application.config.dartsass.builds = {
+  <span class="s">"application.scss"</span> =&gt; <span class="s">"application.css"</span>
+}</pre>
+      </li>
+
+      <li>
+        <h3><code>@use</code> the engine and override its variables</h3>
+        <p>No load-path config here — the engine exposed <code>lib/assets/stylesheets</code> in Act&nbsp;I, so <code>"shaft"</code> just resolves. Compile-time theming works because the gem shipped source with <code>!default</code>.</p>
+        <span class="fname">app/assets/stylesheets/application.scss</span>
+<pre><span class="k">@use</span> <span class="s">"shaft"</span> <span class="k">with</span> ($primary: <span class="s">#0055ff</span>);</pre>
+      </li>
+
+      <li>
+        <h3>Delete the Sprockets remnants</h3>
+        <p>Following the Rails&nbsp;8 note: remove <code>config/initializers/assets.rb</code> and the compression / precompile settings in your environment files. Delete <code>app/assets/config/manifest.js</code>. Propshaft handles all of it differently.</p>
+      </li>
+
+      <li>
+        <h3>Reference, watch, deploy — unchanged</h3>
+        <p>The link tag is the same; Propshaft appends the digest. Add a watcher for development. The deploy command doesn't change — <code>dartsass-rails</code> hooks <code>dartsass:build</code> in as a prerequisite of <code>assets:precompile</code>.</p>
+        <span class="fname">app/views/layouts/application.html.erb &middot; Procfile.dev</span>
+<pre>&lt;%= stylesheet_link_tag <span class="s">"application"</span>, <span class="s">"data-turbo-track": "reload"</span> %&gt;
+
+<span class="cmt"># Procfile.dev</span>
+css: bin/rails dartsass:watch</pre>
+      </li>
+    </ol>
+
+    <h2>Who compiles what, after the swap</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Host pipeline</th><th>Sees <code>lib/assets</code> shaft.scss?</th><th>Who compiles the SCSS</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="p">Sprockets<br><span style="color:var(--faint)">(legacy)</span></td>
+            <td><span class="yes">Yes</span> — via the initializer + precompile entry</td>
+            <td>Sprockets / SassC, in-process</td>
+          </tr>
+          <tr>
+            <td class="p">Propshaft +<br>dartsass-rails</td>
+            <td><span class="yes">Yes</span> — same <code>assets.paths</code> becomes a load path</td>
+            <td>Dart Sass &rarr; <code>builds/</code>, Propshaft serves</td>
+          </tr>
+          <tr>
+            <td class="p">Propshaft alone<br><span style="color:var(--faint)">(no compiler)</span></td>
+            <td><span class="no">Served, not compiled</span></td>
+            <td>Nobody — Propshaft can't compile SCSS</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="lab">One version, both worlds</span>
+      <p>The conditional initializer is what lets a single gem release feed a Rails&nbsp;7 Sprockets app and a Rails&nbsp;8 Propshaft app at once — the two migrations can roll out per-app, on their own schedules, without ever forking the engine.</p>
+    </div>
+
+    <div class="recap">
+      <h2>The migration in six moves</h2>
+      <ol>
+        <li><b>Expose the path.</b> Push <code>lib/assets/stylesheets</code> onto <code>config.assets.paths</code> from the engine — <code>lib/assets</code> is never automatic.</li>
+        <li><b>Drop Sprockets deps.</b> <code>propshaft</code> at runtime, <code>dartsass-rails</code> for dev; remove <code>sprockets-rails</code> and <code>sassc-rails</code>.</li>
+        <li><b>Clean the SCSS.</b> <code>@use</code>/<code>@forward</code>, <code>!default</code> vars, <code>url()</code> not <code>image-url</code>, no directives.</li>
+        <li><b>Host adds dartsass, not cssbundling.</b> Auto load paths reach the engine with zero wiring.</li>
+        <li><b>Host <code>@use "shaft" with (...)</code>.</b> Compile-time theming, no path config.</li>
+        <li><b>Delete assets.rb &amp; manifest.js.</b> Link tag, watch, and deploy stay the same.</li>
+      </ol>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:.6rem; width:100%; max-width:var(--measure);">
+    <span>lib/assets/stylesheets/shaft.scss</span>
+    <span>Sprockets &rarr; Propshaft</span>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var toggle = document.getElementById('toggle');
+    toggle.addEventListener('click', function () {
+      var now = root.getAttribute('data-theme');
+      var isDark = now ? now === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    });
+
+    var bar = document.getElementById('progress');
+    function onScroll() {
+      var h = document.documentElement;
+      var max = h.scrollHeight - h.clientHeight;
+      var pct = max > 0 ? (h.scrollTop / max) * 100 : 0;
+      bar.style.width = pct + '%';
+    }
+    document.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
