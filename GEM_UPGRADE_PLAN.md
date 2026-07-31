@@ -37,14 +37,16 @@ git rev-parse HEAD > /tmp/gem_baseline_sha.txt
 {
   "main":  "dist/shaft.js",
   "style": "dist/shaft.min.css",
-  "sass":  "lib/assets/stylesheets/shaft.scss",
+  "sass":  "lib/assets/stylesheets/shaft.module.scss",   // Dart-Sass module entrypoint (Step 2)
   "exports": {
     ".":      "./dist/shaft.js",
-    "./scss": "./lib/assets/stylesheets/shaft.scss",
+    "./scss": "./lib/assets/stylesheets/shaft.module.scss",
     "./css":  "./dist/shaft.min.css"
   }
 }
 ```
+(The module entrypoint is created in Step 2; the legacy `shaft.scss` is not a
+package.json entry — sassc hosts resolve it via the Sprockets load path.)
 
 **Verify:**
 ```bash
@@ -58,21 +60,42 @@ node -e 'let p=require("./package.json");
 
 ---
 
-## Step 2 — Make the SCSS source Dart-Sass-clean
+## Step 2 — Dual entrypoints: legacy source LibSass-safe + a Dart-Sass module entrypoint
 
-**Do:** the source must compile under Dart Sass (node `sass` and host `dartsass-rails`). Convert `@import`→`@use`/`@forward`, mark every themeable var `!default`, remove Sprockets helpers (`image-url`/`asset-path`/`font-url`), directives, and `.erb`.
+> **Do NOT run `sass-migrator module` in-place on the shared source.** The legacy
+> consumers use **sassc-rails = LibSass**, which has no module system — it cannot
+> parse `@use`/`@forward`/`sass:math`, and it ignores `.import.scss` shims. Migrating
+> the shared source to modules makes it **uncompilable by every sassc host**. So the
+> gem keeps a LibSass-safe `@import` entrypoint AND ships a *parallel* Dart-Sass
+> module entrypoint that only Dart-Sass consumers load. Full in-place
+> `sass-migrator module` (deleting the legacy entrypoint) is the fleet-wide
+> **retirement** step for after the last LibSass consumer is gone — see the
+> retirement note under "Done criteria".
 
-**Verify:**
+**Do:**
+1. **Legacy** `lib/assets/stylesheets/shaft.scss` — keep it `@import`-based and
+   LibSass-safe: every themeable var `!default`; remove the constructs LibSass and
+   Dart Sass both reject — Sprockets helpers (`image-url`/`asset-path`/`font-url`),
+   directives (`//=`), and `.erb`. (Do **not** introduce `@use`/`@forward` here.)
+2. **Module** `lib/assets/stylesheets/shaft.module.scss` — a parallel Dart-Sass-only
+   entrypoint that `@forward`s the same partials with `!default`, enabling
+   `@use "shaft" with (…)`. `sass-migrator` may *scaffold* this against a copy;
+   never let it overwrite the legacy entrypoint. Point `sass`/`exports["./scss"]`
+   (Step 1) at this file.
+
+**Verify (both compilers):**
 ```bash
 # must return NOTHING:
 grep -rnE 'image-url|asset-path|font-url|asset-data-url|//= ' lib/assets app/assets
 find lib app -name '*.scss.erb' -o -name '*.css.erb'
-# must COMPILE clean under Dart Sass:
-npx sass lib/assets/stylesheets/shaft.scss /tmp/probe.css --load-path=lib/assets/stylesheets >/dev/null && echo "SASS OK"
+# legacy entrypoint MUST compile under LibSass/sassc (the untouched consumers):
+sassc lib/assets/stylesheets/shaft.scss /tmp/legacy.css -I lib/assets/stylesheets >/dev/null && echo "LIBSASS OK"
+# module entrypoint MUST compile under Dart Sass:
+npx sass lib/assets/stylesheets/shaft.module.scss /tmp/mod.css --load-path=lib/assets/stylesheets >/dev/null && echo "DARTSASS OK"
 ```
 
-**Pass:** both greps/find empty **and** `SASS OK` printed.
-**Fail-gate:** any Sprockets helper remains, or Dart Sass errors — fix the source; these crash the host build later, in a worse place.
+**Pass:** greps/find empty, `LIBSASS OK`, **and** `DARTSASS OK`.
+**Fail-gate:** legacy fails under LibSass → module syntax leaked into the shared source; you've broken every sassc host — back it out. Module fails under Dart Sass → theming consumers can't compile it; fix before shipping.
 
 ---
 
@@ -190,9 +213,18 @@ test "$(ruby -e 'puts Gem::Specification.load(Dir["*.gemspec"].first).version')"
 ## Done criteria for the whole gem upgrade
 
 - [ ] `gem_scanner.sh` reports no Sprockets-isms in the SCSS source.
-- [ ] `package.json` resolves JS/SCSS/CSS to three distinct, correct targets.
+- [ ] Legacy `shaft.scss` compiles under **LibSass/sassc**; module `shaft.module.scss` compiles under **Dart Sass**.
+- [ ] `package.json` resolves JS/SCSS/CSS to three distinct, correct targets (`./scss` → module entrypoint).
 - [ ] Both dummy apps precompile and render with zero asset 404s.
-- [ ] `dist/**` shipped; `propshaft` runtime; `sprockets-rails`/`sassc-rails` gone.
+- [ ] `dist/**` shipped; `propshaft` runtime; `sprockets-rails`/`sassc-rails` removed from the gemspec.
 - [ ] Gem + npm published lockstep from one tag.
 
 Once green, hosts migrate on their own schedule using `APP_UPGRADE_PLAN.md`.
+
+### Retirement note (future, fleet-wide)
+
+Once the **last** consumer is off LibSass (every app on Vite or dartsass-rails),
+run `sass-migrator module` in-place to collapse the dual entrypoints: delete the
+legacy `shaft.scss`, promote `shaft.module.scss` to the sole source, and drop the
+`@import`-based compatibility. Until then, both entrypoints ship together — the
+LibSass gate above is what guarantees the not-yet-migrated apps keep working.

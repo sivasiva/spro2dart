@@ -43,15 +43,18 @@ value surviving into the built CSS.
 
 **Do:** add source exports alongside the existing precompiled fields; do **not**
 remove `style`/`dist` (the other 10 consumers still serve precompiled on sassc).
+The `sass`/`exports["./scss"]` fields point at the **Dart-Sass module entrypoint**
+you create in A2 — NOT the legacy `shaft.scss` (which stays LibSass-safe for the
+sassc apps and is resolved by them via the Sprockets load path, not package.json).
 ```jsonc
 // package.json
 {
-  "main":  "dist/shaft.js",                        // was dist/shaft.min.css — fix the JS entry too
-  "style": "dist/shaft.min.css",                   // keep: precompiled consumers
-  "sass":  "lib/assets/stylesheets/shaft.scss",    // NEW: Vite/Dart Sass source
+  "main":  "dist/shaft.js",                              // was dist/shaft.min.css — fix the JS entry too
+  "style": "dist/shaft.min.css",                         // keep: precompiled consumers
+  "sass":  "lib/assets/stylesheets/shaft.module.scss",   // NEW: Vite/Dart-Sass module entrypoint (A2)
   "exports": {
     ".":      "./dist/shaft.js",
-    "./scss": "./lib/assets/stylesheets/shaft.scss",
+    "./scss": "./lib/assets/stylesheets/shaft.module.scss",
     "./css":  "./dist/shaft.min.css"
   }
 }
@@ -65,19 +68,43 @@ node -e 'let p=require("./package.json");
 **Pass:** `SOURCE EXPORT OK`.
 **Fail-gate:** missing `sass`/`exports["./scss"]` → Vite can't reach the source and the pilot's theme cannot survive. Stop.
 
-### Step A2 — Ensure the source compiles under Dart Sass
+### Step A2 — Dual entrypoints: keep the legacy source LibSass-safe, add a Dart-Sass module entrypoint
 
-**Do:** the source must be `@use`-clean (Vite uses Dart Sass): mark themed vars
-`!default`, remove Sprockets Sass helpers (`image-url`/`asset-path`/`font-url`),
-convert internal `@import`→`@use`/`@forward`.
+> **Why dual, not an in-place `sass-migrator` run.** The other 10 consumers use
+> **sassc-rails = LibSass**, which has **no module system** — it cannot parse
+> `@use`/`@forward`/`sass:math`. Running `sass-migrator module` (or any migration
+> that emits module syntax) on the shared source would make it *uncompilable* by
+> every sassc app, and `.import.scss` shims don't help (LibSass ignores them).
+> So the legacy entrypoint stays `@import`-based, and the module entrypoint is a
+> **parallel** file that only Vite/Dart-Sass consumers load. Full in-place
+> `sass-migrator module` is a fleet-wide *retirement* step for after the last
+> LibSass consumer is gone — not now.
 
-**Verify:**
+**Do:**
+1. **Legacy entrypoint** `lib/assets/stylesheets/shaft.scss` — keep LibSass-safe:
+   `@import`-based internals, every themed var `!default`, and remove the only
+   thing LibSass and Dart Sass both reject — Sprockets helpers (`image-url`/
+   `asset-path`/`font-url` → `url()`). The 10 sassc apps keep `@import "shaft"`.
+2. **Module entrypoint** `lib/assets/stylesheets/shaft.module.scss` — a parallel,
+   Dart-Sass-only file that `@forward`s the same partials with `!default` so the
+   pilot can `@use "@yourorg/shaft/scss" with (…)`. `sass-migrator` can *scaffold*
+   this (run it against a copy to generate the `@forward` graph); do not let it
+   overwrite the legacy entrypoint.
+
+**Verify (both compilers must pass):**
 ```bash
 grep -rnE 'image-url|asset-path|font-url' lib/assets && echo "DIRTY ↑" || echo "CLEAN"
-npx sass lib/assets/stylesheets/shaft.scss /tmp/probe.css --load-path=lib/assets/stylesheets >/dev/null && echo "SASS OK"
+# legacy entrypoint MUST still compile under LibSass/sassc (the 10 untouched apps):
+sassc lib/assets/stylesheets/shaft.scss /tmp/legacy.css \
+  -I lib/assets/stylesheets >/dev/null && echo "LIBSASS OK"     # or a sassc-rails dummy app
+# module entrypoint MUST compile under Dart Sass (the pilot):
+npx sass lib/assets/stylesheets/shaft.module.scss /tmp/mod.css \
+  --load-path=lib/assets/stylesheets >/dev/null && echo "DARTSASS OK"
 ```
-**Pass:** `CLEAN` **and** `SASS OK`.
-**Fail-gate:** helper present or Dart Sass errors → fixes required; these crash the pilot's Vite build.
+**Pass:** `CLEAN`, `LIBSASS OK`, **and** `DARTSASS OK`.
+**Fail-gate:** legacy entrypoint fails under LibSass → you've leaked module syntax
+into the shared source and just broke the 10 sassc apps; back it out. Module
+entrypoint fails under Dart Sass → the pilot can't theme; fix before B4.
 
 ### Step A3 — Publish, keep versions lockstep
 
