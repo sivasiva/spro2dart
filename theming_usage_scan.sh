@@ -122,6 +122,10 @@ detect_stack() {
   echo "$s" | xargs
 }
 
+# app compiles SCSS Ruby-side (sassc/sprockets) → bare @import resolves via the
+# Sprockets load path to the gem SOURCE (works today; flips under a node bundler)
+app_is_sassc() { grep -qiE "gem +['\"](sassc-rails|sassc|sass-rails)" "$1/Gemfile" 2>/dev/null; }
+
 echo_hdr() {
   printf '%sTheming-usage scan%s  namespace: %s%s%s  pkg: %s%s%s' \
     "$c_b" "$c_x" "$c_b" "$PREFIX" "$c_x" "$c_b" "$PKG" "$c_x"
@@ -204,9 +208,15 @@ for app in "${apps[@]}"; do
   # override resolution
   res="n/a"
   if [ "$bucket" = "OVERRIDE" ]; then
-    if sg "$SRC_RE" "$app" >/dev/null 2>&1; then res="${c_ok}override→source${c_x} (real)"
-    elif [ "$GEM_HAS_SASS" = 1 ]; then res="${c_ok}override→source${c_x} (gem sass field resolves it)"
-    else res="${c_ov}override→precompiled${c_x} (at-risk: bare \"$PKG\" + gem has no sass field → verify by compiling)"; fi
+    if sg "$SRC_RE" "$app" >/dev/null 2>&1; then
+      res="${c_ok}override→source${c_x} (subpath specifier)"
+    elif app_is_sassc "$app"; then
+      res="${c_ok}override→source${c_x} (sassc load-path) ${c_use}⚠ flips to precompiled under Vite unless rewired to a source specifier${c_x}"
+    elif [ "$GEM_HAS_SASS" = 1 ]; then
+      res="${c_ok}override→source${c_x} (gem sass field)"
+    else
+      res="${c_ov}override→precompiled${c_x} (at-risk: bare \"$PKG\", node resolution, gem has no sass field → verify by compiling)"
+    fi
   fi
   stack=$(detect_stack "$app"); [ -z "$stack" ] && stack="(none detected)"
   # surface
