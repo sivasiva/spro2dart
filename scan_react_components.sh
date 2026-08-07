@@ -64,18 +64,24 @@ gen=0; skip=0; total_opens=0
 
 while IFS= read -r -d '' f; do
   # complete single-line calls (props hash contains no ')')
-  mapfile -t matches < <(grep -oE "react_component\([^)]*\)" "$f" 2>/dev/null || true)
-  opens=$(grep -oE "react_component\(" "$f" 2>/dev/null | wc -l | tr -d ' ')
+  # ponytail: hand-rolled read loop instead of mapfile — works on bash 3.2 (macOS).
+  # Count as we read: ${#matches[@]} on an empty array trips set -u on bash 3.2.
+  matches=()
+  mcount=0
+  while IFS= read -r _m; do matches+=("$_m"); mcount=$(( mcount + 1 )); done \
+    < <(grep -oE "react_component\([^)]*\)" "$f" 2>/dev/null || true)
+  # `|| true`: grep exits 1 on no-match, and pipefail would kill the script (bash set -e)
+  opens=$( { grep -oE "react_component\(" "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
   total_opens=$(( total_opens + opens ))
 
   # opens the -oE pass couldn't complete = multi-line or ')' inside props
-  unparsed=$(( opens - ${#matches[@]} ))
+  unparsed=$(( opens - mcount ))
   if [ "$unparsed" -gt 0 ]; then
     echo "SKIP  $f — $unparsed call(s) span lines or have ')' in props; convert by hand"
     skip=$(( skip + unparsed ))
   fi
 
-  for m in "${matches[@]}"; do
+  for m in ${matches[@]+"${matches[@]}"}; do   # empty-array-safe under set -u (bash 3.2)
     name=$(printf '%s' "$m" | sed -E "s/^react_component\([[:space:]]*['\"]([^'\"]+).*/\1/")
     [ -n "$name" ] || { echo "SKIP  $f — could not read component name in: $m"; skip=$((skip+1)); continue; }
 
