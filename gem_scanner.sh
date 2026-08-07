@@ -6,14 +6,16 @@ set -u
 
 root="."
 FIX=0
+BRIEF=0
 GEM=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --fix)   FIX=1 ;;
-    --gem)   shift; GEM="${1:-}" ;;
-    --gem=*) GEM="${1#--gem=}" ;;
-    -*)      echo "unknown flag: $1 (use --fix, --gem NAME)" >&2; exit 2 ;;
-    *)       root="$1" ;;
+    --fix)    FIX=1 ;;
+    --brief)  BRIEF=1 ;;   # collapse BEFORE/AFTER blocks to one line per match
+    --gem)    shift; GEM="${1:-}" ;;
+    --gem=*)  GEM="${1#--gem=}" ;;
+    -*)       echo "unknown flag: $1 (use --fix, --brief, --gem NAME)" >&2; exit 2 ;;
+    *)        root="$1" ;;
   esac
   shift
 done
@@ -28,11 +30,17 @@ hit()  { found=1; printf '  \033[31m✗\033[0m %s\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 step() { printf '      → %s\n' "$1"; }
 fixed(){ printf '  \033[33m⟳ fixed:\033[0m %s\n' "$1"; }
-# emit: file line BEFORE AFTER  — the actionable change for one line
+# emit: file line BEFORE AFTER  — the actionable change for one line.
+# --brief collapses to a single locate line; full mode shows BEFORE/AFTER.
 emit()  {
-  printf '        \033[2m%s:%s\033[0m\n' "$1" "$2"
-  printf '          \033[31mBEFORE:\033[0m %s\n' "$3"
-  printf '          \033[32mAFTER: \033[0m %s\n' "$4"
+  if [ "$BRIEF" -eq 1 ]; then
+    if [ "$3" = "(missing)" ]; then printf '        \033[2m%s\033[0m  add: %s\n' "$1" "$4"
+    else printf '        \033[2m%s:%s\033[0m  %s\n' "$1" "$2" "$3"; fi
+  else
+    printf '        \033[2m%s:%s\033[0m\n' "$1" "$2"
+    printf '          \033[31mBEFORE:\033[0m %s\n' "$3"
+    printf '          \033[32mAFTER: \033[0m %s\n' "$4"
+  fi
 }
 trim()  { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 # splitrow: given a `file:line:content` grep row, sets F/L/C
@@ -206,7 +214,8 @@ if [ "$js_hit" -eq 1 ]; then
   step "Propshaft serves JS as-is — no concat, no transpile. Pick one:"
   step "  a) ship one pre-bundled app/assets/builds/$gem_lc/application.js (simplest)"
   step "  b) provide importmap pins from the engine (host uses importmap-rails)"
-  step "  c) move to jsbundling-rails (esbuild/rollup) if you need a real build"
+  step "  c) real build: ship ES modules, host runs 'bin/rails javascript:install:esbuild'"
+  step "     (jsbundling-rails) and imports them — see CONSUMER_APP_MIGRATION.md Step 9"
   step "  compile .coffee to .js first — CoffeeScript support is gone"
 else
   ok "no Sprockets-bundled JS detected"

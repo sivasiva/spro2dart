@@ -162,8 +162,54 @@ Things that silently worked under Sprockets and now break:
 - [ ] **Other gems that assumed Sprockets** (e.g. a Bootstrap gem via `sassc`) →
       import via `@use "bootstrap/scss/bootstrap"` instead of a `//= require`.
 - [ ] **JS that relied on Sprockets bundling/ES transpilation** → Propshaft does
-      neither; move JS to `importmap-rails` or `jsbundling-rails`. (CSS migration
-      doesn't force this, but flag it if you were leaning on Sprockets for JS.)
+      neither. See Step 9. (CSS migration doesn't force this, but if you leaned on
+      Sprockets `//= require` for JS, you must move it.)
+
+---
+
+## Step 9 — JavaScript: migrate to jsbundling-rails (esbuild)
+
+Only needed if the app used Sprockets to concatenate/transpile JS (`//= require`,
+ES modules, CoffeeScript). If you have no real build step — no JSX/TS, no npm
+packages to bundle — prefer **importmap-rails** instead (pins ESM, zero build).
+Otherwise:
+
+1. Add the gem and run the installer:
+   ```ruby
+   # Gemfile
+   gem "jsbundling-rails"
+   ```
+   ```bash
+   bundle install
+   bin/rails javascript:install:esbuild   # or :rollup / :webpack
+   ```
+   The installer creates `app/javascript/application.js`, adds `esbuild` + a
+   `build` script to `package.json`, sets output to `app/assets/builds/`, and adds
+   a `js: yarn build --watch` line to `Procfile.dev`.
+
+2. Move JS from `app/assets/javascripts/` → `app/javascript/`, and convert
+   Sprockets directives to ES imports:
+   ```js
+   // before:  //= require my_engine/widget
+   import "my_engine/widget"
+   ```
+
+3. Install the JS deps:
+   ```bash
+   yarn install
+   ```
+
+4. Reference the bundle in the layout — Propshaft serves the built file:
+   ```erb
+   <%= javascript_include_tag "application", type: "module", "data-turbo-track": "reload" %>
+   ```
+
+5. Deploy is unchanged: `jsbundling-rails` hooks `javascript:build` into
+   `assets:precompile`, so JS builds first, then Propshaft digests the output.
+   (This mirrors how `dartsass-rails` hooks in for CSS.)
+
+> `app/assets/builds/` is now written by both dartsass and esbuild — keep it
+> gitignored (Step 4).
 
 ---
 

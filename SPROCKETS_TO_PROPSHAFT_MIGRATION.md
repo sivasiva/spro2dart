@@ -132,6 +132,12 @@ Propshaft does not bundle JS. Options, laziest first:
     app.config.importmap.paths << Engine.root.join("config/importmap.rb")
   end
   ```
+- **Let the host bundle it with jsbundling-rails** — if your JS needs a real build
+  (npm deps, JSX/TS), ship raw ES modules and have each consumer app run
+  `bin/rails javascript:install:esbuild`, then `import "my_engine/..."` from its
+  `app/javascript/application.js`. Full host steps are in
+  `CONSUMER_APP_MIGRATION.md` (Step 9). Publish the JS as an npm package (or vendor
+  it) so esbuild can resolve the import.
 
 ---
 

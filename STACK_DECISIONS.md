@@ -131,6 +131,36 @@ import change.
 
 ---
 
+## Fork 6 — Vite via `rails_vite`: JS and CSS travel on different tracks
+
+Evaluated <https://github.com/skryukov/rails_vite> (leaner than `vite_rails` —
+no Rack proxy, no `config/vite.json`, config in `vite.config.ts`; runs
+**alongside** the asset pipeline, builds to its own `public/vite/` manifest).
+
+**Key finding:** it's a *JS* decision, not a CSS one. It resolves imports through
+**node module resolution** and its docs don't address engines/gems, so a Vite
+build **cannot see the engine's `lib/assets`** (the Ruby-channel load path that
+`dartsass-rails` reads). It neither solves nor simplifies engine-SCSS delivery —
+it only *forces* the npm channel for any host that compiles the engine CSS in Vite.
+
+**Because it runs alongside the pipeline, the clean split is to let the two
+concerns ride different tracks on the same host:**
+
+| Concern | Track |
+| --- | --- |
+| App's own JS (+ optionally app CSS) | `rails_vite` → `public/vite/` |
+| **Shaft engine's SCSS** | `dartsass-rails` + Propshaft (Ruby channel — the `lib/assets` setup) |
+
+**Decision:** adopting `rails_vite` (or any Vite integration) is a **JS-only**
+choice and is compatible with keeping the engine's CSS on the dartsass/Propshaft
+track — the engine migration doesn't change. Only move the engine's SCSS into
+Vite if the host commits to compiling **all** CSS in the node bundler, which means
+the npm channel (Fork 4, Option B). The deciding question is unchanged: *does the
+host compile the engine's CSS in Rails or in a node bundler?* `rails_vite` affects
+only the JS answer.
+
+---
+
 ## Ruled out (and why)
 
 - **Precompiled CSS in the gem (Avo pattern):** breaks compile-time Sass theming.
