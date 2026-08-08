@@ -9,12 +9,13 @@
 # stub the script prints once). Props stay as the original Ruby expressions,
 # serialized to JSON server-side — so `current_user.id`, i18n, etc. still work.
 #
-# ponytail: parses the common single-line form
-#     <%= react_component('Name', props: { k: v, ... }) %>
-# Ceiling — reported as SKIPPED (never mangled), fix by hand:
-#   * the call spans multiple lines
-#   * a ')' appears inside the props hash (e.g. props: { id: foo(x) })
-# Bump this parser to a real Ruby AST pass only if those cases are common.
+# Handles both single- and multi-line calls, and nested parens in props
+# (e.g. props: { id: foo(x) }), via a quote-aware balanced-paren walk in perl.
+#     <%= react_component('Name',
+#           props: { k: v, id: foo(x) }) %>
+# ponytail ceiling — only genuinely broken input is reported as SKIPPED:
+#   * a call whose parens never balance (missing ')'), i.e. malformed source.
+# Bump to a real Ruby AST pass only if you hit props the flatten can't survive.
 
 set -euo pipefail
 
@@ -42,6 +43,36 @@ kebab() {
     | tr '[:upper:]' '[:lower:]'
 }
 
+# Extract every complete react_component(...) call from a file, each flattened
+# onto one line. Walks parens across newlines and skips parens inside quotes, so
+# multi-line calls and nested-paren props both come out whole. Unbalanced calls
+# (missing close paren) are dropped — the count mismatch flags them as SKIPPED.
+command -v perl >/dev/null || { echo "perl required (balanced-paren extraction)"; exit 1; }
+PERL_EXTRACT="$(mktemp)"
+trap 'rm -f "$PERL_EXTRACT"' EXIT
+cat > "$PERL_EXTRACT" <<'PERL'
+local $/; my $s = <>;                       # slurp the whole file
+while ($s =~ /react_component\s*\(/g) {
+  my $start = $-[0];                        # start of "react_component"
+  my $i = pos($s);                          # just past the "("
+  my ($depth, $q) = (1, "");
+  while ($i < length($s) && $depth > 0) {
+    my $c = substr($s, $i, 1);
+    my $prev = $i > 0 ? substr($s, $i - 1, 1) : "";
+    if ($q ne "") { $q = "" if ($c eq $q && $prev ne "\\"); }
+    elsif ($c eq "'" || $c eq '"') { $q = $c; }
+    elsif ($c eq "(") { $depth++; }
+    elsif ($c eq ")") { $depth--; }
+    $i++;
+  }
+  next if $depth != 0;                       # never balanced → malformed, skip
+  (my $call = substr($s, $start, $i - $start)) =~ s/\s+/ /g;
+  print $call, "\n";
+  pos($s) = $i;                              # resume after this call
+}
+PERL
+extract_calls() { perl "$PERL_EXTRACT" "$1" 2>/dev/null || true; }
+
 # ---- self-check: fails loudly if the parsing logic breaks -------------------
 if [ "${SELFTEST:-0}" = 1 ]; then
   ck() { [ "$1" = "$2" ] || { echo "FAIL: '$1' != '$2'"; exit 1; }; }
@@ -54,6 +85,18 @@ if [ "${SELFTEST:-0}" = 1 ]; then
   pr=$(printf '%s' "$m" | sed -E "s/.*props:[[:space:]]*\{(.*)\}[[:space:]]*\)$/\1/")
   ck "$nm" "UserCard"
   ck "$(printf '%s' "$pr" | tr -s ' ')" " id: user.id, name: 'x' "
+
+  # multi-line + nested-paren extraction: should flatten to ONE whole call
+  tmp=$(mktemp)
+  printf '%s\n' \
+    "<%= react_component('HTMLViewer'," \
+    "      props: { html: sanitize(body), n: 1 }) %>" > "$tmp"
+  ml=$(extract_calls "$tmp"); rm -f "$tmp"
+  ck "$ml" "react_component('HTMLViewer', props: { html: sanitize(body), n: 1 })"
+  mnm=$(printf '%s' "$ml" | sed -E "s/^react_component\([[:space:]]*['\"]([^'\"]+).*/\1/")
+  mpr=$(printf '%s' "$ml" | sed -E "s/.*props:[[:space:]]*\{(.*)\}[[:space:]]*\)$/\1/")
+  ck "$mnm" "HTMLViewer"
+  ck "$(printf '%s' "$mpr" | tr -s ' ')" " html: sanitize(body), n: 1 "
   echo "SELFTEST OK"; exit 0
 fi
 
@@ -65,21 +108,21 @@ fi
 gen=0; skip=0; total_opens=0
 
 while IFS= read -r -d '' f; do
-  # complete single-line calls (props hash contains no ')')
+  # Complete calls (multi-line + nested-paren aware), one flattened per line.
   # ponytail: hand-rolled read loop instead of mapfile — works on bash 3.2 (macOS).
   # Count as we read: ${#matches[@]} on an empty array trips set -u on bash 3.2.
   matches=()
   mcount=0
   while IFS= read -r _m; do matches+=("$_m"); mcount=$(( mcount + 1 )); done \
-    < <(grep -oE "react_component\([^)]*\)" "$f" 2>/dev/null || true)
+    < <(extract_calls "$f")
   # `|| true`: grep exits 1 on no-match, and pipefail would kill the script (bash set -e)
-  opens=$( { grep -oE "react_component\(" "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  opens=$( { grep -oE "react_component[[:space:]]*\(" "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
   total_opens=$(( total_opens + opens ))
 
-  # opens the -oE pass couldn't complete = multi-line or ')' inside props
+  # a `react_component(` the balanced walk couldn't close = malformed (unbalanced) call
   unparsed=$(( opens - mcount ))
   if [ "$unparsed" -gt 0 ]; then
-    echo "SKIP  $f — $unparsed call(s) span lines or have ')' in props; convert by hand"
+    echo "SKIP  $f — $unparsed call(s) have unbalanced parens (malformed); fix by hand"
     skip=$(( skip + unparsed ))
   fi
 
