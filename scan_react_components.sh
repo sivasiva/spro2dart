@@ -31,7 +31,9 @@ for a in "$@"; do
   esac
 done
 
-OUT="app/views/application"
+OUT="app/views/application"          # generated partials: _<kebab>.html.erb
+ENTRY="app/frontend/entrypoints"     # generated Vite entrypoints: <kebab>.jsx
+BUNDLES_REL="../../react/bundles"    # from ENTRY to app/react/bundles (react-on-rails startup dir)
 
 # NameOfComponent -> name-of-component ; HTMLParser -> html-parser
 kebab() {
@@ -58,7 +60,7 @@ fi
 [ -n "$SRC" ] || usage
 [ -d "$SRC" ] || { echo "not a directory: $SRC"; exit 2; }
 
-[ "$DRY" = 1 ] || mkdir -p "$OUT"
+[ "$DRY" = 1 ] || mkdir -p "$OUT" "$ENTRY"
 
 gen=0; skip=0; total_opens=0
 
@@ -92,22 +94,45 @@ while IFS= read -r -d '' f; do
     fi
 
     k=$(kebab "$name")
-    dest="$OUT/_$k.html.erb"   # leading _ = Rails partial
+    partial="$OUT/_$k.html.erb"   # leading _ = Rails partial
+    entry="$ENTRY/$k.jsx"
 
     if [ "$DRY" = 1 ]; then
-      echo "GEN   $dest   <- $name  ($f)"
+      echo "GEN   $partial  +  $entry   <- $name  ($f)"
       continue
     fi
 
-    cat > "$dest" <<ERB
-<%# Auto-generated from $f by scan_react_components.sh — do not hand-edit. %>
-<%# Mounts <$name /> via Vite (react-on-rails-free). Props render to JSON server-side. %>
-<div
-  data-react-component="$name"
-  data-react-props="<%= { $props }.to_json %>">
-</div>
+    cat > "$entry" <<JS
+// $entry — generated from $f by scan_react_components.sh
+import React from "react";
+import { createRoot } from "react-dom/client";
+import $name from "$BUNDLES_REL/$name/startup/$name";
+
+const container = document.getElementById("$k");
+
+if (container) {
+  const railsProps = JSON.parse(container.getAttribute("data-props"));
+
+  const root = createRoot(container);
+  root.render(<$name {...railsProps} />);
+}
+JS
+
+    cat > "$partial" <<ERB
+<%# $partial — generated from $f by scan_react_components.sh %>
+<%# Rails props for $k %>
+<%
+props = { $props }
+%>
+
+<%# Load component from $entry %>
+<%= vite_javascript_tag '$k.jsx' %>
+
+<%# Mount $k.jsx with Rails props %>
+<div id="$k" data-props="<%= props.to_json %>"></div>
 ERB
-    echo "GEN   $dest   <- $name  ($f)"
+
+    echo "GEN   $partial  +  $entry   <- $name  ($f)"
     gen=$(( gen + 1 ))
   done
 done < <(find "$SRC" -type f -name '*.html.erb' -print0)
@@ -116,19 +141,17 @@ echo "----"
 echo "components found: $total_opens   generated: $gen   skipped: $skip"
 
 if [ "$gen" -gt 0 ] && [ "$DRY" != 1 ]; then
-  cat <<'STUB'
+  cat <<STUB
 
-Add a Vite entrypoint that hydrates the mount divs (once), e.g. app/frontend/entrypoints/react_mounts.jsx:
+Each component now has a partial + its own Vite entrypoint. To use one, replace
+the original call
+    <%= react_component('Name', props: { ... }) %>
+with
+    <%= render 'application/<kebab>' %>
 
-    import { createRoot } from 'react-dom/client'
-    import * as Components from '../components'          // barrel of your components
-
-    document.querySelectorAll('[data-react-component]').forEach((el) => {
-      const Comp = Components[el.dataset.reactComponent]
-      if (!Comp) return console.warn('No component:', el.dataset.reactComponent)
-      createRoot(el).render(<Comp {...JSON.parse(el.dataset.reactProps || '{}')} />)
-    })
-
-Load it in the layout: <%= vite_javascript_tag 'react_mounts' %>
+Check the generated imports resolve — they assume react-on-rails startup files at
+    app/react/bundles/<Name>/startup/<Name>
+(entrypoints import via $BUNDLES_REL/<Name>/startup/<Name>). Edit BUNDLES_REL at
+the top of this script if your bundles live elsewhere.
 STUB
 fi
